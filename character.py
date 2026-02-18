@@ -29,6 +29,8 @@ tags目前的设定：1重装2迅捷3穿透4治疗
 2 群体治疗  为死亡队友复活并恢复到一半血量两次（自身死亡不可，若已死亡则不能继续治疗）
 3 标签剥夺  随机（或定向，待定）除去对方一个有标签的角色的标签
 4 群体伤害转移（护盾）  将部分伤害转移50%到自身身上，3次判定
+问题1：转移伤害是标签前还是标签后的，如果遇到了自爆会怎么样？
+解决方案：暂定版本是自爆能直接伤害跳过转移，并且一般伤害的转移是先判定后转移（就是以结果为准）
 5 重装盔甲   若受到伤害高于8则减免伤害
 6 箭矢穿透   如果攻击对象的原始血量低于一定值（判定为脆皮是原始hp小于等于24）箭矢在攻击本对象之后能进一步攻击另外的对象，伤害相对减少
 7 狂暴   血量降到14或一下到一定程度的时候伤害*1.4
@@ -36,21 +38,23 @@ tags目前的设定：1重装2迅捷3穿透4治疗
 9 群伤  对对方所有存活单位造成同样伤害
 
 这里开始第二版本的角色设计，鉴于第一个版本可玩性不高，而且相对来说调整的局限性比较大，所以决定重新开始设定
-| 角色名        | ATK | HP | 标签     | 设计定位     |
-1  均衡战士A    8      19     0
-2  均衡战士B    6      23     0
-3  均衡战士C    4      26     0
-4  自爆步兵   标签判定   -1     1
-5  诅咒巫师     6      20     3
-6  死灵法师复活  4      24     2
-7  铁甲卫士     4      30     5
-8  护盾部署者    2      33    4
-9  风行射手      7     21     6
-10 狂战士       8      19     7
-11 毒药投手     6      21     8
-12 重炮统领     5      25     9
+| 角色名        | ATK | HP | 标签  |   编写状态
+1  均衡战士A    8      19     0         无需改动
+2  均衡战士B    6      23     0         无需改动
+3  均衡战士C    4      26     0         无需改动
+4  自爆步兵   标签判定   -1     1         完成（除了对于护盾部署者判定外）
+5  诅咒巫师     6      20     3          完成
+6  死灵法师复活  4      24     2          完成
+7  铁甲卫士     4      30     5          完成
+8  护盾部署者    2      33    4          未完成
+9  风行射手      7     21     6          未完成
+10 狂战士       8      19     7          完成
+11 毒药投手     6      21     8          未完成
+12 重炮统领     5      25     9          未完成
 
 在这里还要提要：我现将这部分全部改成后端类型的，也就是参数传入-return类型的处理函数而将处理部分全部挑出来，为后续进一步的开发做准备
+
+下一步应该是要优化对局的返回内容（特别是回合编号不能空了）和输入输出变量的整理规范性
 '''
 
 from random import sample,randint
@@ -80,16 +84,20 @@ class Soldier:
         self.maxhp = hp   #最大血量，当然目前没有扣除当然直接导入hp即可
         self.tag = tagnum  #标签的序号
         self.alive=True   #是否存活的状态、
-        self.team=teami
+        self.team=teami   #战士所属的队伍编号
     #受到攻击的时候调用，作用于对象自身，参数分别为攻击伤害和是否具有穿透标签
     def Hurt(self,gotatk,CureTag,passtag=False,bombtag=False):
+        #在这里，我打算效仿一下CureTag的写法用作伤害的转移
         if self.tag==5 and gotatk>=8:
+            #铁甲卫士判定
             #重装标签受到大于等于8伤害减少伤害1
             gotatk=(gotatk*6)//10
         elif self.hp<=14 and passtag==True:
+            #狂战士判定
             #受到带有狂暴标签的时候伤害乘1.4向下取整
             gotatk=(gotatk*14)//10
         if bombtag==True and self.hp<=24:
+            #自爆步兵判定
             gotatk=25
         if self.hp>gotatk:
             #如果一击没死
@@ -97,6 +105,7 @@ class Soldier:
         elif self.hp<=gotatk:
             #可能死了
             if CureTag[self.team]>0:
+                #死灵法师判定
                 #如果有治疗，治疗标签消失，血量回3
                 self.hp=self.maxhp//2
                 CureTag[self.team]-=1
@@ -106,6 +115,7 @@ class Soldier:
                 self.hp=0
                 self.alive=False
                 if self.tag==2:
+                    #死灵法师判定，如果死亡则本队伍判定次数归零
                     CureTag[self.team]=0
                 return (self.name+"死亡")
         return ""
@@ -114,12 +124,12 @@ class Soldier:
     def Attack(self):
         pstag=False
         bombtag=False
-        #预设没有穿透标签
+        #预设没有狂暴标签
         if self.alive==False:
             return 0,pstag #已经死亡，类似于打出空击
         #存活
         if self.tag==7:
-            #有穿透标签则赋予
+            #有狂暴标签则赋予
             pstag=True
         if self.tag==1:
             bombtag=True
@@ -149,29 +159,35 @@ class Battlefield:
     def SoldierInit(self,PlayerSoldierList):
         #这个playersoldierlist传入的时候是一个列表，里面包含的是几个列表，分别是玩家传入的
         for i in range(self.num):
+            #这里的i是队伍的意思
             PLLS=[]
-            removetag=False
-            removeteam= -1
+            #引入list，并且判定诅咒巫师
+
             for j in PlayerSoldierList[i]:
                 #这个j理论上就是每一个战士的元组，应当创建Soldier然后传入战场
                 Sd=Soldier(j[0],j[2],j[1],j[3],i)
                 self.TotalHP[i]+=j[2]
                 if Sd.tag==2:
+                    #死灵法师判定，如果找到死灵法师那么将治疗次数算入团队中进行统计
                     self.curetag[i]=2
-                elif Sd.tag==3:
-                    removetag=True
-                    removeteam=self.GetTargetGroup(i)
                 #这样子，战场里面分别是代表每一个玩家的列表，内部按顺序包含的是每一个角色的
                 PLLS.append(Sd)
             self.field.append(PLLS)
             #这里补充一下，我原来的想法是维护一个堆来使得能快速得出血量最低的角色，但是后面考虑到其实如果不使用额外空间而是每次都进行O(n)的比大小也未必不是个好主意，所以最后选择了擂台得出的解法，但是这里维护一个比大小使用的函数方便后期的改变形式
-        if removetag==True:
-            while 1:
-                removec=randint(1,self.num)
-                if self.field[removeteam][removec].tag!=0:
-                    self.field[removeteam][removec].tag=0
-                    break
-
+        #判定诅咒巫师
+        for i in range(self.num):
+            for j in self.field[i]:
+                #这里的j应该是已经维护好的soldier，这时候只需要找到那就可以操作对方队伍删除标签了
+                if j.tag==3:
+                    #诅咒巫师判定
+                    Targetgroup=self.GetTargetGroup(i)
+                    for k in range(len(self.field[Targetgroup])):
+                        #如果对方没有标签或者也是诅咒巫师则跳过
+                        if self.field[Targetgroup][k].tag != 0 and self.field[Targetgroup][k].tag != 3:
+                            self.field[Targetgroup][k].tag=0
+                            break
+                            #判定成功则跳出对对方的查找判定
+        #先手判定
         if self.FirstTeam==-1:
             if self.TotalHP[0]>self.TotalHP[1]:
                 self.FirstTeam=1
@@ -229,36 +245,21 @@ class Battlefield:
                     information=self.field[Tteam][Target].Hurt(Tatk,self.curetag,PassTag,BomBtag)
                     #这里设置了Hurt之后会有返回信息说明受到攻击的判定状态
                     StringRet=StringRet+("{}的{}向{}的{}发起了攻击，atk={} {}\n".format(j+1,self.field[j][i].name,Tteam+1,self.field[Tteam][Target].name,Tatk,information))
-        return StringRet,WinTeam
+        return StringRet,WinTeam #传出的是文本传出信息和胜利队伍的序号，其实我觉得后期改成用特定格式的符号表示比较方便处理（例如转换json）但是暂且这样吧
 class Player:
     def __init__(self):
-        self.ctnum=3
-        self.ctpool=sample(Characters,6)
-        #预设摇5个选三个
+        #创建player不用初始传入参数
+        self.ctnum=3 #每次选中的角色数量
+        self.poolsize=6 #角色池的大小
+        self.ctpool=sample(Characters,self.poolsize) #抽取出角色池
+        #预设摇6个选三个
     def GetCharacters(self):
+        #一开始想的是包含输入输出，现在看来就是只用返回自己的池子供外部取就行（这样来保证在后续开发中随机池子和池子是保存在后端的）
         return self.ctpool
-        chosen=[]
-        #这里是不完善的导入机制，现在直接废弃不使用，直接传入cc，是一个列表形式的，每个元素代表选中的序号（不是下标）
-        """
-        while 1:
-            cc=input("在池中选取角色，按照出击顺序排列，空格分割").split(" ")
-            if len(list(set(cc)))!=len(cc):
-                print("不能重复选择同一个角色，请重新选择")
-            else:break
-        """
     def MakeCharacter(self,cc):
+        #cc是切片的文本，是一个列表包含选取角色的序号（但是其实里面元素到底是int还是str无所谓因为下面规定了int()
+        #这个就是把选中的角色转换成导入的格式放到chosen池子里面罢了
         chosen=[]
         for i in cc:
             chosen.append(self.ctpool[int(i) - 1].copy())
         return chosen
-        """
-        mc=input("输入增益对象（出击序号和增益项目之间使用空格分割，角色之间使用逗号分割）1代表atk+1,2代表hp+1").split(",")
-        for i in mc:
-            pl=i.split(" ")
-            if pl[1]=="1":
-                chosen[int(pl[0])-1][1]+=1
-            elif pl[1]=="2":
-                chosen[int(pl[0])-1][2]+=1
-            #好了，到这里就是处理完成要导入的角色，可以返回了。
-        """
-        #这里直接注释掉原来的代码，改成传入处理好的chosen，而chosen的处理交给前端js直接传入JavaScript，然后再后端代码将json转成python所能读取的形式传入函数即可
