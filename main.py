@@ -16,17 +16,20 @@ def GetGain(cc):
 
 #这里是一个游戏类似于成品的模拟过程
 def RunGame():
-    print(P1.GetCharacters(),"\n",P2.GetCharacters())
+    print(P1.GetCharacters())
     #P1.MakeCharacter(cc1), P2.MakeCharacter(cc2)
     cci1=input("输入玩家1的选择").split(" ")
     cc1=P1.MakeCharacter(cci1)
     GetGain(cc1)
+    os.system("cls")
+    print(P2.GetCharacters())
     cci2=input("输入玩家2的选择").split(" ")
     cc2=P2.MakeCharacter(cci2)
     GetGain(cc2)
+    os.system("cls")
     PL = [cc1,cc2]
     BTF = Battlefield()
-    BTF.SoldierInit(PL)
+    print(BTF.SoldierInit(PL))
     print(PL)
     ProcessStr,winnero=BTF.StartBattle()
     print(ProcessStr)

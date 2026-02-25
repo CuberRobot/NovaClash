@@ -4,7 +4,7 @@ Characters=[
     ['均衡战士A',8,19,0],
     ['均衡战士B',6,23,0],
     ['均衡战士C',4,26,0],
-    ['自爆步兵',16,-1,1],
+    ['自爆步兵',16,0,1],
     ['诅咒巫师',6,20,3],
     ['死灵法师',4,24,2],
     ['铁甲卫士',4,30,5],
@@ -28,6 +28,11 @@ class Soldier:
         self.team=teami   #战士所属的队伍编号
     #受到攻击的时候调用，作用于对象自身，参数分别为攻击伤害和是否具有穿透标签
     def Hurt(self,gotatk,CureTag,passtag=False,bombtag=False):
+        if self.tag == 1 and bombtag == True:
+            self.alive=False
+            return "两个队伍自爆步兵相杀,均死亡"
+        if self.hp<=0:
+            raise RuntimeError
         #在这里，我打算效仿一下CureTag的写法用作伤害的转移
         if self.tag==5 and gotatk>=8:
             #铁甲卫士判定
@@ -73,6 +78,7 @@ class Soldier:
             #有狂暴标签则赋予
             pstag=True
         if self.tag==1:
+            #自爆步兵判定
             bombtag=True
             self.alive=False
         #返回攻击参数：伤害，穿透标签判定
@@ -90,20 +96,19 @@ class Battlefield:
     def FindHPMin(self,teamn):
         #这里teamn是从0开始的
         minhp = (100)
-        j= -1
+        j = -1
         le=len(self.field[teamn])
         for i in range(le):
-            if minhp>self.field[teamn][i].hp and self.field[teamn][i].alive==True:
+            if minhp>self.field[teamn][i].hp and self.field[teamn][i].alive:
                 minhp=self.field[teamn][i].hp
                 j=i
         return j
     def SoldierInit(self,PlayerSoldierList):
+        string_output=""
         #这个playersoldierlist传入的时候是一个列表，里面包含的是几个列表，分别是玩家传入的
         for i in range(self.num):
             #这里的i是队伍的意思
             PLLS=[]
-            #引入list，并且判定诅咒巫师
-
             for j in PlayerSoldierList[i]:
                 #这个j理论上就是每一个战士的元组，应当创建Soldier然后传入战场
                 Sd=Soldier(j[0],j[2],j[1],j[3],i)
@@ -124,8 +129,9 @@ class Battlefield:
                     Targetgroup=self.GetTargetGroup(i)
                     for k in range(len(self.field[Targetgroup])):
                         #如果对方没有标签或者也是诅咒巫师则跳过
-                        if self.field[Targetgroup][k].tag != 0 and self.field[Targetgroup][k].tag != 3:
+                        if self.field[Targetgroup][k].tag != 0 and self.field[Targetgroup][k].tag != 3 and self.field[Targetgroup][k].tag != 1:
                             self.field[Targetgroup][k].tag=0
+                            string_output=string_output+str(i+1)+"组死灵法师消除了对方"+self.field[Targetgroup][k].name+"角色标签\n"
                             break
                             #判定成功则跳出对对方的查找判定
         #先手判定
@@ -136,9 +142,9 @@ class Battlefield:
                 self.FirstTeam=0
             else:
                 self.FirstTeam=randint(0,1)
-            return ("没有根据迅捷标签决定先手权，根据机制生成先手为{}".format(self.FirstTeam+1))
+            return (string_output+"没有根据迅捷标签决定先手权，根据机制生成先手为{}".format(self.FirstTeam+1))
         else:
-            return("{}队拥有迅捷，先发起了攻击".format(self.FirstTeam+1))
+            return string_output+("{}队拥有迅捷，先发起了攻击".format(self.FirstTeam+1))
 
 
     def RevRange(self):
@@ -169,9 +175,10 @@ class Battlefield:
                 for j in self.RevRange():
                     #现在开始着手修改这里，判定是哪一组人先动的手
                     if self.field[j][i].alive==False:
-                        StringRet=StringRet+("{}的{}已经死亡，没有攻击\n".format(j,self.field[j][i].name))
+                        StringRet=StringRet+("{}的{}已经死亡，没有攻击\n".format(j+1,self.field[j][i].name))
                         #判断角色是否死亡，不拥有攻击能力
                         continue
+                    #攻击方产生攻击信息 与受攻击者没有关系
                     Tatk,PassTag,BomBtag=self.field[j][i].Attack()
                     #获取攻击信息
                     Tteam=self.GetTargetGroup(j)
