@@ -1,0 +1,165 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>CardGame v1.0</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <div class="bg"></div>
+    <div class="app">
+      <header class="header">
+        <div class="brand">
+          <div class="logo">CG</div>
+          <div>
+            <div class="title">CardGame</div>
+            <div class="subtitle">两人在线对战 · 选角 · 增益 · 战斗回放</div>
+          </div>
+        </div>
+        <div class="status">
+          <a href="/static/rules.html" class="pill pill-link" target="_blank" rel="noopener">规则说明</a>
+          <div class="pill" id="connPill">未连接</div>
+          <div class="pill pill-muted" id="roomPill">房间：-</div>
+          <div class="pill pill-muted" id="scorePill">比分：0 - 0</div>
+        </div>
+      </header>
+
+      <main class="main">
+        <section class="panel left">
+          <div class="panel-title">匹配</div>
+          <div class="card" id="matchCard">
+            <label class="label">你的昵称</label>
+            <input id="nameInput" class="input" placeholder="玩家" />
+
+            <div class="row">
+              <button id="randomBtn" class="btn btn-primary">随机匹配</button>
+              <button id="createRoomBtn" class="btn">创建房间</button>
+            </div>
+
+            <div class="divider"></div>
+
+            <label class="label">加入房间（4位）</label>
+            <div class="row">
+              <input id="roomInput" class="input" placeholder="例如 A1B2" />
+              <button id="joinRoomBtn" class="btn">加入</button>
+            </div>
+
+            <div class="hint" id="matchHint">
+              提示：加入/创建房间后会进入等待状态，对手加入后自动开始。
+            </div>
+          </div>
+
+          <div class="panel-title">对局信息</div>
+          <div class="card" id="gameInfoCard">
+            <div class="kv">
+              <div class="k">你的序号</div>
+              <div class="v" id="playerNo">-</div>
+            </div>
+            <div class="kv">
+              <div class="k">对手</div>
+              <div class="v" id="opponentName">-</div>
+            </div>
+            <div class="kv">
+              <div class="k">当前回合</div>
+              <div class="v" id="roundNo">-</div>
+            </div>
+            <div class="row" style="margin-top: 10px">
+              <button id="leaveBtn" class="btn btn-small">离开本局</button>
+            </div>
+          </div>
+        </section>
+
+        <section class="panel center" id="battlePanel">
+          <div class="panel-title">你的角色池</div>
+          <div id="poolGrid" class="grid"></div>
+
+          <div class="panel-title">出击队伍（顺序很重要）</div>
+          <div class="team">
+            <div class="slot" data-slot="1">
+              <div class="slot-title">第1位</div>
+              <div class="slot-body" id="slot1">点击左侧角色卡片加入</div>
+            </div>
+            <div class="slot" data-slot="2">
+              <div class="slot-title">第2位</div>
+              <div class="slot-body" id="slot2">-</div>
+            </div>
+            <div class="slot" data-slot="3">
+              <div class="slot-title">第3位</div>
+              <div class="slot-body" id="slot3">-</div>
+            </div>
+          </div>
+
+          <div class="panel-title">增益（最多 4 次）</div>
+          <div class="buffs">
+            <div class="row">
+              <button class="btn btn-small" id="buffAtkBtn">ATK +2</button>
+              <button class="btn btn-small" id="buffHpBtn">HP +4</button>
+              <div class="pill pill-muted" id="buffLeft">剩余：4</div>
+            </div>
+            <div class="hint">
+              先选择增益类型，再点击队伍槽位添加。自爆步兵如果被选中必须放第1位。
+            </div>
+            <div id="buffList" class="buff-list"></div>
+          </div>
+
+          <div class="panel-title">攻击策略（必选 + 可多选附加）</div>
+          <div class="card strategy-card">
+            <div class="label">基本策略（二选一）</div>
+            <div class="row strategy-row">
+              <label class="radio-label"><input type="radio" name="basicStrategy" value="low_hp" checked /> 优先攻击血量低</label>
+              <label class="radio-label"><input type="radio" name="basicStrategy" value="high_atk" /> 优先攻击攻击力高</label>
+            </div>
+            <div class="label" style="margin-top:10px">附加：优先攻击拥有以下标签的角色（可多选可不选）</div>
+            <div id="priorityTagsBox" class="priority-tags"></div>
+          </div>
+
+          <div class="row">
+            <button id="submitBtn" class="btn btn-primary btn-wide" disabled>
+              提交本回合
+            </button>
+            <button id="resetBtn" class="btn btn-wide" disabled>重置选择</button>
+          </div>
+
+          <div class="error" id="errorBox" hidden></div>
+        </section>
+
+        <section class="panel right" id="logPanel">
+          <div class="panel-title">战报</div>
+          <div class="card log">
+            <div class="log-body" id="logBox">
+              连接后开始匹配，进入战斗后这里会实时显示事件解析文本。
+            </div>
+          </div>
+          <div class="panel-title">事件（原始标记）</div>
+          <div class="card log">
+            <pre class="log-body mono" id="eventBox">-</pre>
+          </div>
+
+          <div class="panel-title">历史对局（最近 8 场）</div>
+          <div class="card history-card">
+            <div id="historyList" class="history-list"></div>
+          </div>
+        </section>
+      </main>
+
+      <footer class="footer">
+        <div class="foot-note">
+          前端负责把事件标记转自然语言；后端仅广播事件与状态。
+        </div>
+      </footer>
+
+      <!-- 对局结果提示动画层 -->
+      <div class="result-overlay" id="resultOverlay" hidden>
+        <div class="result-card">
+          <div class="result-title" id="resultTitle">本局结束</div>
+          <div class="result-text" id="resultText">你方胜利！</div>
+          <button class="btn btn-primary" id="resultCloseBtn">确定</button>
+        </div>
+      </div>
+    </div>
+
+    <script src="/static/app.js"></script>
+  </body>
+</html>
+

@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>规则说明 - CardGame v1.0</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+    <style>
+      .rules-app { max-width: 720px; margin: 0 auto; padding: 20px 18px 40px; }
+      .rules-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 24px; }
+      .rules-title { font-size: 22px; font-weight: 800; color: #e9ecf7; }
+      .rules-back { padding: 8px 16px; border-radius: 10px; font-size: 14px; text-decoration: none;
+        background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.2); color: #e9ecf7; }
+      .rules-back:hover { background: rgba(255,255,255,0.15); }
+      .rules-section { margin-bottom: 28px; }
+      .rules-section h2 { font-size: 16px; font-weight: 700; color: rgba(233,236,247,0.95);
+        margin: 0 0 12px 0; padding-bottom: 6px; border-bottom: 1px solid rgba(255,255,255,0.12); }
+      .rules-section p { font-size: 14px; line-height: 1.65; color: rgba(233,236,247,0.85); margin: 0 0 10px 0; }
+      .rules-section ul { margin: 0 0 10px 0; padding-left: 20px; color: rgba(233,236,247,0.85); font-size: 14px; line-height: 1.7; }
+      .rules-table { width: 100%; border-collapse: collapse; font-size: 13px; margin-top: 10px; }
+      .rules-table th, .rules-table td { padding: 10px 12px; text-align: left; border-bottom: 1px solid rgba(255,255,255,0.1); }
+      .rules-table th { color: rgba(233,236,247,0.9); font-weight: 600; }
+      .rules-table td { color: rgba(233,236,247,0.8); }
+      .rules-table tr:hover td { background: rgba(255,255,255,0.04); }
+      .rules-note { font-size: 12px; color: rgba(233,236,247,0.6); margin-top: 8px; }
+    </style>
+  </head>
+  <body>
+    <div class="bg"></div>
+    <div class="app">
+      <div class="rules-app">
+        <header class="rules-header">
+          <h1 class="rules-title">玩法与规则说明</h1>
+          <a href="/" class="rules-back">← 返回主页</a>
+        </header>
+
+        <section class="rules-section">
+          <h2>一、游戏概述</h2>
+          <p>CardGame 为<strong>两人在线对战</strong>，采用<strong>三局两胜</strong>制。每局开始时双方从各自的随机角色池中选出 3 名角色并配置增益与攻击策略，随后自动进行回合制战斗，先赢得 2 局或在 3 局后比分更高的一方获胜。</p>
+        </section>
+
+        <section class="rules-section">
+          <h2>二、对局流程</h2>
+          <ul>
+            <li><strong>匹配</strong>：通过随机匹配或创建/加入房间（4 位房间号）与对手进入同一对局。</li>
+            <li><strong>选角</strong>：从本局角色池（6 名角色）中选出 3 名组成出击队伍，<strong>顺序即战斗中的攻击顺序</strong>。</li>
+            <li><strong>增益</strong>：共 4 次增益机会，可对队伍中的角色分配「ATK+2」或「HP+4」。</li>
+            <li><strong>攻击策略</strong>：选择本局的基本策略（优先攻击血量低 / 优先攻击攻击力高），并可选择附加优先针对的标签（多选或不选）。</li>
+            <li><strong>提交</strong>：选角、增益与策略均确认后提交；双方都提交后开始战斗并展示战报。</li>
+          </ul>
+        </section>
+
+        <section class="rules-section">
+          <h2>三、选角与增益规则</h2>
+          <ul>
+            <li>每局双方各自拥有一个<strong>随机 6 人角色池</strong>，整场对局（三局）内角色池不变。</li>
+            <li>必须<strong>恰好选择 3 名角色</strong>，且<strong>恰好使用 4 次增益</strong>才能提交。</li>
+            <li>若队伍中包含<strong>自爆步兵</strong>，则自爆步兵必须放在<strong>队伍首位（第 1 位）</strong>。</li>
+            <li>增益类型：<strong>ATK+2</strong>（攻击力+2）、<strong>HP+4</strong>（最大生命+4），可任意分配给 3 个出击位。</li>
+          </ul>
+        </section>
+
+        <section class="rules-section">
+          <h2>四、先手权判定</h2>
+          <p>在战斗开始前，根据<strong>增益后</strong>双方队伍的<strong>总攻击力 + 总血量</strong>之和进行比较，<strong>数值较小的一方获得先手</strong>。若相等则随机决定。战报开头会标明「先手：我方」或「先手：对方」。</p>
+        </section>
+
+        <section class="rules-section">
+          <h2>五、战斗顺序与攻击目标</h2>
+          <ul>
+            <li>每回合内，按<strong>出击位 1 → 2 → 3</strong>依次行动；同一出击位上，<strong>先手方先行动</strong>，再后手方。即：先手1 → 后手1 → 先手2 → 后手2 → 先手3 → 后手3。</li>
+            <li><strong>攻击目标选择</strong>：先按你选择的<strong>附加策略</strong>（若有）筛选对方拥有指定标签的角色；若有多人符合，则在这些角色中按<strong>基本策略</strong>（血量最低或攻击最高）选一人；若无人符合附加策略，则直接在对方全体存活角色中按基本策略选择。</li>
+            <li>基本策略二选一：<strong>优先攻击血量低</strong> / <strong>优先攻击攻击力高</strong>。附加策略为可多选的标签，表示优先攻击拥有这些标签的敌人。</li>
+          </ul>
+        </section>
+
+        <section class="rules-section">
+          <h2>六、胜负判定</h2>
+          <p>当某一方<strong>全部角色死亡</strong>时，对方赢得该局。先赢得 <strong>2 局</strong>的一方获得整场胜利；若打满 3 局后比分为 1:1，则第 3 局胜者获胜。</p>
+        </section>
+
+        <section class="rules-section">
+          <h2>七、角色标签效果</h2>
+          <p>部分角色带有标签，在战斗中触发对应效果：</p>
+          <table class="rules-table">
+            <thead>
+              <tr><th>标签</th><th>效果说明</th></tr>
+            </thead>
+            <tbody>
+              <tr><td>自爆</td><td>攻击时自身必定死亡；若目标最大血量≤24 则直接击杀，否则造成固定伤害。自爆伤害不参与护盾转移。</td></tr>
+              <tr><td>群体治疗</td><td>己方角色被击杀时，可消耗次数将该队友复活至一半血量。拥有者死亡后失效，次数用尽或死亡后不可再复活。</td></tr>
+              <tr><td>标签剥夺</td><td>战斗开始时，剥夺对方一名有标签角色的全部标签（自爆等除外）。</td></tr>
+              <tr><td>护盾</td><td>为队友分担 50% 伤害至自身，有次数限制；自爆伤害不参与分担。</td></tr>
+              <tr><td>重装盔甲</td><td>受到 ≥8 点伤害时，伤害按 60% 结算。</td></tr>
+              <tr><td>箭矢穿透</td><td>若攻击目标为脆皮（最大血量≤24），命中后可对另一名敌人追加一次减半伤害的攻击。</td></tr>
+              <tr><td>狂暴</td><td>自身血量≤14 时，伤害 ×1.4。</td></tr>
+              <tr><td>中毒</td><td>攻击可使目标中毒，在后续回合持续造成伤害，可叠加（有上限）。</td></tr>
+              <tr><td>群伤</td><td>对对方所有存活单位造成等量攻击伤害。</td></tr>
+            </tbody>
+          </table>
+          <p class="rules-note">具体数值与判定以游戏内实际表现为准。</p>
+        </section>
+
+        <section class="rules-section">
+          <h2>八、其他说明</h2>
+          <ul>
+            <li>进入对局前请<strong>填写昵称</strong>，否则无法匹配或加入房间。</li>
+            <li>对局中可随时点击「离开本局」退出当前房间；若对方离开，你将自动退出该房间并可重新匹配。</li>
+            <li>战报中的「我方」「对方」会替换为你与对手的昵称，便于阅读。</li>
+          </ul>
+        </section>
+
+        <div style="text-align: center; margin-top: 32px;">
+          <a href="/" class="rules-back">返回主页</a>
+        </div>
+      </div>
+    </div>
+  </body>
+</html>
