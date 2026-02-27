@@ -11,11 +11,22 @@ from game_service import build_team_from_selection, create_player_pools, run_bat
 
 
 app = FastAPI()
-app.mount("/static", StaticFiles(directory="static"), name="static")
+
+import os
+_base_dir = os.path.dirname(os.path.abspath(__file__))
+_frontend_dist = os.path.join(_base_dir, "frontend", "dist")
+_use_new_frontend = os.path.isdir(_frontend_dist)
+
+app.mount("/static", StaticFiles(directory="static"), name="static_legacy")
+if _use_new_frontend:
+    app.mount("/assets", StaticFiles(directory=os.path.join(_frontend_dist, "assets")), name="assets")
+    app.mount("/models", StaticFiles(directory=os.path.join(_frontend_dist, "models")), name="models")
 
 
 @app.get("/")
 def index():
+    if _use_new_frontend:
+        return FileResponse(os.path.join(_frontend_dist, "index.html"))
     return FileResponse("static/index.html")
 
 
