@@ -1,3 +1,7 @@
+"""
+命令行版 NovaClash 入口：三局两胜，每局双方从角色池选 3 人、配增益与策略后自动战斗。
+仅用于本地双人轮流输入，与网页版共用 game_service 与 character 逻辑。
+"""
 from game_service import (
     build_team_from_selection,
     create_player_pools,
@@ -6,6 +10,10 @@ from game_service import (
 
 
 def parse_selection(input_str):
+    """
+    解析玩家输入的角色序号字符串（空格分隔），返回整数序号列表。
+    非数字片段会被忽略，不报错。
+    """
     parts = [p for p in input_str.strip().split() if p]
     indices = []
     for part in parts:
@@ -17,6 +25,10 @@ def parse_selection(input_str):
 
 
 def parse_strategy_basic(s):
+    """
+    解析基本攻击策略：2/high/atk/high_atk 视为「优先攻击高攻」，其余为「优先低血」。
+    返回 "high_atk" 或 "low_hp"。
+    """
     s = (s or "").strip().lower()
     if s in ("2", "high", "atk", "high_atk"):
         return "high_atk"
@@ -24,6 +36,10 @@ def parse_strategy_basic(s):
 
 
 def parse_strategy_tags(input_str):
+    """
+    解析附加优先标签：支持空格或逗号分隔，只接受 1–9 的整数，非法值忽略。
+    返回标签 ID 列表，用于「优先攻击拥有某标签的角色」。
+    """
     if not input_str.strip():
         return []
     out = []
@@ -39,11 +55,9 @@ def parse_strategy_tags(input_str):
 
 def parse_gains(input_str):
     """
-    输入格式示例：
-    1 1,2 2,3 1  表示：
-    - 第1位角色 atk+2
-    - 第2位角色 hp+4
-    - 第3位角色 atk+2
+    解析增益输入：每段为「出击位 增益类型」，逗号分隔多段。
+    出击位从 1 开始；增益类型 1=ATK+2，2=HP+4。格式错误或非法值整段忽略。
+    返回 [(position, gain_type), ...]，不保证长度恰好为 4，由调用方校验。
     """
     result = []
     if not input_str.strip():
@@ -64,6 +78,7 @@ def parse_gains(input_str):
 
 
 def print_pool(player_index, pool):
+    """在控制台打印某玩家的角色池（序号、名称、ATK、HP、标签）。"""
     print(f"玩家 {player_index} 的角色池：")
     for idx, role in enumerate(pool, start=1):
         tags = role.get("tags") or []
@@ -75,6 +90,10 @@ def print_pool(player_index, pool):
 
 
 def run_single_game():
+    """
+    执行一局游戏：为双方生成角色池，轮流输入选角、增益、策略，
+    构建队伍后跑战斗并打印战报。返回本局胜者（0 或 1）。
+    """
     pool1, pool2 = create_player_pools()
 
     print_pool(1, pool1)
@@ -126,8 +145,9 @@ def run_single_game():
 
 def event_to_text(evt):
     """
-    把 character 输出的事件标记转换成中文文本。
-    网页端未来可以直接复用同样的事件结构，在前端完成转换。
+    将战斗事件元组转为可读中文句子。evt[0] 为事件类型，
+    其余元素依类型不同（先手、轮次、命中、死亡、复活、中毒等）。
+    与 webserver.event_to_text 结构一致，便于双端复用逻辑。
     """
     t = evt[0]
     if t == "FIRST_STRIKE":
@@ -136,13 +156,13 @@ def event_to_text(evt):
         _, team_i, caster, enemy_i, target = evt
         return "玩家%d的%s剥夺了玩家%d的%s的标签" % (team_i + 1, caster, enemy_i + 1, target)
     if t == "ROUND":
-        return "=== 回合 %d ===" % evt[1]
+        return "=== 轮次 %d ===" % evt[1]
     if t == "POISON_TICK":
         _, team_i, name, dmg, hp_after = evt
         return "%s受到中毒伤害%d点（HP=%d）" % (name, dmg, hp_after)
     if t == "POISON_APPLY":
         _, atk_team, atk_name, def_team, def_name, pdmg, turns = evt
-        return "%s使%s中毒（每回合%d点，持续%d回合）" % (atk_name, def_name, pdmg, turns)
+        return "%s使%s中毒（每轮次%d点，持续%d轮次）" % (atk_name, def_name, pdmg, turns)
     if t == "SKIP_DEAD":
         _, team_i, name = evt
         return "玩家%d的%s已死亡，跳过攻击" % (team_i + 1, name)
@@ -195,6 +215,7 @@ def event_to_text(evt):
 
 
 def main():
+    """三局两胜循环：最多打 3 局，任一方先赢 2 局即结束并输出最终胜者。"""
     winner_count = [0, 0]
     for _ in range(3):
         if max(winner_count) >= 2:

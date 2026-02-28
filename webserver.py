@@ -1,11 +1,16 @@
+"""
+Web 版 NovaClash 服务：FastAPI + WebSocket，支持随机匹配与房间号加入。
+无认证，房间与对局状态仅存内存；三局两胜，每回合双方提交选角与策略后自动结算。
+"""
 import asyncio
 import json
 import random
 import string
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse
-from fastapi.staticfiles import StaticFiles
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request
+from fastapi.responses import FileResponse, HTMLResponse
+from starlette.exceptions import HTTPException as StarletteHTTPException
+from starlette.staticfiles import StaticFiles
 
 from game_service import build_team_from_selection, create_player_pools, run_battle_from_teams
 
@@ -16,14 +21,21 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 
 @app.get("/")
 def index():
+    """首页返回单页应用的 HTML。"""
     return FileResponse("static/index.html")
 
 
 def _room_code():
+    """生成 4 位大写字母+数字的房间号。"""
     return "".join(random.choice(string.ascii_uppercase + string.digits) for _ in range(4))
 
 
 class Room(object):
+    """
+    单局房间：最多 2 人，三局两胜。每回合为双方下发角色池，收集提交后调用战斗逻辑结算。
+    players: 列表项为 {ws, name, pool, submission}，pool 为本回合角色池，submission 为本回合已提交数据。
+    """
+
     def __init__(self, code):
         self.code = code
         self.players = []  # [{ws, name, pool, pending_submission}]
@@ -31,7 +43,7 @@ class Room(object):
         self.best_of = 3
         self.round = 0
         self.score = [0, 0]
-        self.is_random = False
+        self.is_random = False  # 是否为随机匹配创建的房间
         # 每个玩家在整把游戏中固定使用同一角色池
         self.pools = [None, None]
 
@@ -39,18 +51,22 @@ class Room(object):
         return len(self.players) >= 2
 
     def is_ready(self):
+        """两人到齐可开始对局。"""
         return len(self.players) == 2
 
 
+# 全局房间表：房间号 -> Room；ROOMS_LOCK 保护增删与遍历
 ROOMS = {}
 ROOMS_LOCK = asyncio.Lock()
 
 
 async def ws_send(ws, payload):
+    """向单个 WebSocket 发送 JSON 消息（ensure_ascii=False 以正确输出中文）。"""
     await ws.send_text(json.dumps(payload, ensure_ascii=False))
 
 
 async def broadcast(room, payload):
+    """向房间内所有玩家发送同一条消息；单条发送失败不中断其余。"""
     for p in list(room.players):
         try:
             await ws_send(p["ws"], payload)
@@ -59,6 +75,7 @@ async def broadcast(room, payload):
 
 
 def event_to_text(evt):
+    """将战斗事件元组转为中文战报一行，与 main.event_to_text 一致。"""
     t = evt[0]
     if t == "FIRST_STRIKE":
         return "先手：玩家%d" % (evt[1] + 1)
@@ -66,13 +83,13 @@ def event_to_text(evt):
         _, team_i, caster, enemy_i, target = evt
         return "玩家%d的%s剥夺了玩家%d的%s的标签" % (team_i + 1, caster, enemy_i + 1, target)
     if t == "ROUND":
-        return "=== 回合 %d ===" % evt[1]
+        return "=== 轮次 %d ===" % evt[1]
     if t == "POISON_TICK":
         _, team_i, name, dmg, hp_after = evt
         return "%s受到中毒伤害%d点（HP=%d）" % (name, dmg, hp_after)
     if t == "POISON_APPLY":
         _, atk_team, atk_name, def_team, def_name, pdmg, turns = evt
-        return "%s使%s中毒（每回合%d点，持续%d回合）" % (atk_name, def_name, pdmg, turns)
+        return "%s使%s中毒（每轮次%d点，持续%d轮次）" % (atk_name, def_name, pdmg, turns)
     if t == "SKIP_DEAD":
         _, team_i, name = evt
         return "玩家%d的%s已死亡，跳过攻击" % (team_i + 1, name)
@@ -119,6 +136,10 @@ def event_to_text(evt):
 
 
 async def _start_next_round(room):
+    """
+    开启下一回合：回合数+1，若本局尚未生成角色池则生成并缓存，否则复用；
+    清空双方 submission，向两人分别发送 round_start（各自 pool 与当前比分）。
+    """
     # 保护：正常情况下最多 3 回合，对超过上限的情况给出错误提示
     if room.round >= 3:
         await broadcast(
@@ -156,6 +177,10 @@ async def _start_next_round(room):
 
 
 async def _try_resolve_round(room):
+    """
+    当双方都已提交本回合数据时：用选角与增益构建队伍，跑战斗，更新比分，
+    广播 round_result；若已有方达到 2 胜或已打满 3 局则广播 match_end 并销毁房间，否则启动下一回合。
+    """
     if not room.is_ready():
         return
     if room.players[0].get("submission") is None or room.players[1].get("submission") is None:
@@ -257,6 +282,10 @@ async def _join_random(ws, name):
 
 
 async def _join_room(ws, name, code):
+    """
+    加入指定房间：若 code 为空则新建房间并生成房间号；同一连接不能重复加入；
+    满员返回 None。加入后若已两人则发 matched 并 _start_next_round，否则发 waiting。
+    """
     if not code:
         code = _room_code()
     code = code.upper()
@@ -293,6 +322,11 @@ async def _join_room(ws, name, code):
 
 @app.websocket("/ws")
 async def websocket_endpoint(ws: WebSocket):
+    """
+    WebSocket 入口：接收 JSON 消息，按 type 分发。
+    支持：join_random（随机匹配）、join_room（加入/创建房间）、submit_round（提交本回合）、leave_room（离开）。
+    断线或异常时向同房间其他玩家发送 left_room(reason=opponent_left) 并清理房间。
+    """
     await ws.accept()
     room = None
     try:
@@ -330,6 +364,7 @@ async def websocket_endpoint(ws: WebSocket):
                 continue
 
             if t == "submit_round":
+                # 校验房间、回合号与身份，将 selection/gains/strategy 写入对应玩家的 submission
                 if room is None:
                     await ws_send(ws, {"type": "error", "message": "未加入房间"})
                     continue
@@ -341,6 +376,16 @@ async def websocket_endpoint(ws: WebSocket):
                 if r != room.round:
                     await ws_send(ws, {"type": "error", "message": "回合号不匹配"})
                     continue
+
+                # 提前验证：每个位置最多2次增益
+                gain_count = [0, 0, 0]
+                for position, gain_type in gains:
+                    if isinstance(position, int) and 1 <= position <= 3:
+                        gain_count[position - 1] += 1
+                for i, count in enumerate(gain_count):
+                    if count > 2:
+                        await ws_send(ws, {"type": "error", "message": f"第{i+1}个出击位已获得{count}次增益，每个角色最多2个增益"})
+                        continue
 
                 # 找到提交者是第几位玩家
                 player_index = None
@@ -414,3 +459,18 @@ async def websocket_endpoint(ws: WebSocket):
                         pass
         except Exception:
             pass
+
+
+# 忽略 favicon 请求
+@app.get("/favicon.ico")
+async def favicon():
+    """返回空响应避免 404 错误。"""
+    return HTMLResponse(content="", status_code=204)
+
+
+# 自定义 404 页面
+@app.exception_handler(StarletteHTTPException)
+async def custom_404_handler(request: Request, exc: StarletteHTTPException):
+    if exc.status_code == 404:
+        return FileResponse("static/404.html")
+    return HTMLResponse(content=f"Error: {exc.detail}", status_code=exc.status_code)

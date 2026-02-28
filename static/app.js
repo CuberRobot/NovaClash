@@ -1,32 +1,46 @@
+/**
+ * NovaClash 前端：WebSocket 连接、匹配/选角/提交、战报与历史对局展示。
+ * 与后端 /ws 约定 JSON 消息 type：join_random / join_room / submit_round / leave_room 等。
+ */
 let ws = null;
 let state = {
   connected: false,
   room: null,
   player: null,
   opponent: null,
-  myName: "", // 本方昵称，用于战报中的名称替换
+  myName: "",
   round: 0,
   score: [0, 0],
   pool: [],
-  selected: [], // indices (1-based in pool)
-  buffs: [], // [slot, type]
-  buffMode: null, // 1 atk, 2 hp
+  selected: [],   // 角色池序号 1-based，最多 3 个
+  buffs: [],     // [出击位, 类型] 1=ATK+2 2=HP+4，共 4 次
+  buffMode: null,
   submitted: false,
-  waiting: false, // 是否在等待匹配结果
-  inRoom: false, // 是否已经在某个房间/对局中
-  currentMatch: null, // 当前对局记录，用于 match_end 时写入历史
+  waiting: false,
+  inRoom: false,
+  currentMatch: null,
 };
 
 let resultOverlayTimer = null;
-
-const STORAGE_NAME = "cardgame_player_name";
-const STORAGE_HISTORY = "cardgame_history";
+const STORAGE_NAME = "novaclash_player_name";
+const STORAGE_HISTORY = "novaclash_history";
 const HISTORY_MAX = 8;
 const HISTORY_TEXTS_PER_ROUND = 40;
-
 const $ = (id) => document.getElementById(id);
 
+// ---------- 工具：XSS 转义、本地存储、历史 ----------
+function escapeHtml(str) {
+  if (str == null || typeof str !== "string") return "";
+  return str
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
 function loadStoredName() {
+  // 从 localStorage 恢复昵称到输入框
   try {
     const name = localStorage.getItem(STORAGE_NAME);
     if (name != null && name.trim() !== "") {
@@ -44,6 +58,7 @@ function saveNameToStorage(name) {
 }
 
 function loadHistory() {
+  // 读取最近 HISTORY_MAX 条对局
   try {
     const raw = localStorage.getItem(STORAGE_HISTORY);
     if (!raw) return [];
@@ -76,6 +91,7 @@ function formatHistoryTime(ts) {
   return (d.getMonth() + 1) + "/" + d.getDate() + " " + d.toTimeString().slice(0, 5);
 }
 
+// 历史列表渲染（用户可控昵称已用 escapeHtml 转义防 XSS）
 function renderHistory() {
   const container = $("historyList");
   if (!container) return;
@@ -93,14 +109,15 @@ function renderHistory() {
         (rec.rounds || [])
           .map(
             (r) =>
-              `<div class="history-round"><span class="history-round-title">回合 ${r.round}</span> 胜者：${r.winner === 1 ? (rec.myName || "我方") : (rec.opponent || "对方")}<pre class="history-round-log">${(r.texts || []).join("\n")}</pre></div>`
+              `<div class="history-round"><span class="history-round-title">回合 ${r.round}</span> 胜者：${escapeHtml(r.winner === 1 ? (rec.myName || "我方") : (rec.opponent || "对方"))}<pre class="history-round-log">${escapeHtml((r.texts || []).join("\n"))}</pre></div>`
           )
           .join("") || "";
+      const safeOpponent = escapeHtml(rec.opponent || "对方");
       return `
         <div class="history-item" data-idx="${idx}">
           <div class="history-item-head">
             <span class="history-time">${formatHistoryTime(rec.at)}</span>
-            <span class="history-vs">vs ${(rec.opponent || "对方")}</span>
+            <span class="history-vs">vs ${safeOpponent}</span>
             <span class="history-score">${scoreStr}</span>
             <span class="history-result ${resultClass}">${resultText}</span>
             <button type="button" class="history-toggle" aria-label="展开">▼</button>
@@ -124,11 +141,9 @@ function renderHistory() {
   });
 }
 
-const TAG_LABELS = {
-  1: "自爆", 2: "群体治疗", 3: "标签剥夺", 4: "护盾", 5: "重装",
-  6: "穿透", 7: "狂暴", 8: "中毒", 9: "群体伤害",
-};
+const TAG_LABELS = { 1: "自爆", 2: "群体治疗", 3: "标签剥夺", 4: "护盾", 5: "重装盔甲", 6: "箭矢穿透", 7: "狂暴", 8: "中毒", 9: "群伤", 10: "吸血", 11: "反弹", 12: "斩杀" };
 
+// ---------- UI：结果浮层、错误提示、战报、策略替换 ----------
 function hideResultOverlay() {
   if (resultOverlayTimer) {
     clearTimeout(resultOverlayTimer);
@@ -187,6 +202,7 @@ function setEventsRaw(events) {
   $("eventBox").textContent = JSON.stringify(events, null, 2);
 }
 
+// 战报中「玩家1/玩家2」替换为当前昵称与对手昵称
 function replacePlayerNames(text) {
   if (!text || typeof text !== "string") return text;
   const me = state.myName || "我方";
@@ -196,6 +212,7 @@ function replacePlayerNames(text) {
   return text.replace(/玩家1/g, one).replace(/玩家2/g, two);
 }
 
+// ---------- WebSocket 连接与发送 ----------
 function connect() {
   if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
     return;
@@ -220,6 +237,7 @@ function send(payload) {
   ws.send(JSON.stringify(payload));
 }
 
+// 匹配/加入房间按钮：在等待或对局中时禁用
 function refreshMatchButtons() {
   const disabled = state.waiting || state.inRoom;
   $("randomBtn").disabled = disabled;
@@ -238,6 +256,7 @@ function updateLayout() {
   if (logPanel) logPanel.style.display = "";
 }
 
+// 新回合开始：清空选角与增益、重置提交状态并刷新池子与槽位
 function resetRoundUI() {
   state.selected = [];
   state.buffs = [];
@@ -269,6 +288,7 @@ function tagLabels(tags) {
   return (tags || []).map((t) => map[t] || `T${t}`);
 }
 
+// 根据 state.pool 渲染角色卡片，点击切换选中（toggleSelect）
 function renderPool() {
   const grid = $("poolGrid");
   grid.innerHTML = "";
@@ -286,6 +306,8 @@ function renderPool() {
     meta.innerHTML = `
       <span class="badge">ATK ${role.atk}</span>
       <span class="badge">HP ${role.hp}</span>
+      <span class="badge">类型 ${role.type || "均衡"}</span>
+      <span class="badge">先手 ${role.initiative || 5}</span>
       <span class="badge">${tagLabels(role.tags).join(" / ") || "无标签"}</span>
     `;
 
@@ -303,7 +325,7 @@ function updateTeamSlots() {
       slots[i].textContent = i === 0 ? "点击左侧角色卡片加入" : "-";
     } else {
       const role = state.pool[idx - 1];
-      slots[i].textContent = `${role.name}（ATK ${role.atk} / HP ${role.hp}）`;
+      slots[i].textContent = `${role.name}（ATK ${role.atk} / HP ${role.hp} / ${role.type || "均衡"} / 先手 ${role.initiative || 5}）`;
     }
   }
 }
@@ -368,14 +390,20 @@ function addBuffToSlot(slotNo) {
   if (state.buffs.length >= 4) return;
   if (slotNo < 1 || slotNo > 3) return;
   if (state.selected.length < slotNo) return; // 未选到该位置
+  // 检查同一位置是否已超过2次增益
+  const countForSlot = state.buffs.filter(b => b[0] === slotNo).length;
+  if (countForSlot >= 2) {
+    showError(`第${slotNo}个出击位已获得2次增益，不能再添加`);
+    return;
+  }
   state.buffs.push([slotNo, state.buffMode]);
   refreshBuffUI();
   validateSubmit();
 }
 
+// ---------- 服务端消息分发：匹配/加入/回合开始/结果/离开/错误 ----------
 function handleServer(msg) {
   if (msg.type === "match_wait") {
-    // 随机匹配：创建了新的随机房间，前端再通过 join_room 进入
     state.room = msg.room;
     const name = $("nameInput").value || "玩家";
     appendLog(`已创建随机房间 ${msg.room}，等待对手加入…`);
@@ -541,7 +569,7 @@ function handleServer(msg) {
   }
 }
 
-// UI bindings
+// ---------- 页面加载：绑定按钮、策略勾选、提交与离开 ----------
 function bind() {
   const overlay = $("resultOverlay");
   if (overlay) {
@@ -554,7 +582,7 @@ function bind() {
 
   const priorityTagsBox = $("priorityTagsBox");
   if (priorityTagsBox) {
-    [1, 2, 3, 4, 5, 6, 7, 8, 9].forEach((tagId) => {
+    [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].forEach((tagId) => {
       const label = document.createElement("label");
       label.className = "checkbox-label";
       const cb = document.createElement("input");

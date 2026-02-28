@@ -1,7 +1,12 @@
+"""
+角色与战斗核心：角色表 ROLES、Soldier 单位、Battlefield 战场。
+Battlefield 负责先手判定、轮次顺序、选目标（按策略）、伤害结算与各类标签效果（自爆/护盾/复活/中毒等），
+输出事件列表与胜方索引，不依赖 IO。
+"""
 from random import randint, sample
 
 
-# 标签编号常量，便于阅读
+# 标签编号常量，便于阅读与策略解析
 TAG_SELF_DESTRUCT = 1       # 自爆
 TAG_GROUP_REVIVE = 2        # 群体治疗/复活
 TAG_REMOVE_TAG = 3          # 标签剥夺
@@ -11,6 +16,9 @@ TAG_PIERCING_ARROW = 6      # 箭矢穿透
 TAG_BERSERK = 7             # 狂暴
 TAG_POISON = 8              # 中毒
 TAG_AOE = 9                 # 群体伤害
+TAG_LIFE_STEAL = 10        # 吸血：造成伤害的 25% 转为回复，单次攻击回复上限 5；自爆不触发
+TAG_REFLECT = 11           # 反弹：实际受到伤害的 40% 反弹给攻击者，反弹伤害不触发护盾/反弹/重装；自爆伤害不反弹
+TAG_EXECUTE = 12           # 斩杀：目标当前血量 ≤ 最大血量 25% 时，本次伤害 ×1.5
 
 # 攻击目标基本策略
 BASIC_LOW_HP = "low_hp"      # 优先攻击血量低的
@@ -18,51 +26,65 @@ BASIC_HIGH_ATK = "high_atk"  # 优先攻击攻击力高的
 
 
 # 角色表，直接用最简单的 dict 结构
+# type: 均衡/输出/前排/辅助/特殊
+# initiative: 先手值，越小越容易抢到先手
 ROLES = [
-    {"id": 1, "name": "均衡战士A", "atk": 8, "hp": 19, "tags": []},
-    {"id": 2, "name": "均衡战士B", "atk": 6, "hp": 23, "tags": []},
-    {"id": 3, "name": "均衡战士C", "atk": 4, "hp": 26, "tags": []},
-    {"id": 4, "name": "自爆步兵", "atk": 16, "hp": 1, "tags": [TAG_SELF_DESTRUCT]},
-    {"id": 5, "name": "诅咒巫师", "atk": 6, "hp": 20, "tags": [TAG_REMOVE_TAG]},
-    {"id": 6, "name": "死灵法师", "atk": 4, "hp": 24, "tags": [TAG_GROUP_REVIVE]},
-    {"id": 7, "name": "铁甲卫士", "atk": 4, "hp": 30, "tags": [TAG_HEAVY_ARMOR]},
-    {"id": 8, "name": "护盾部署者", "atk": 2, "hp": 33, "tags": [TAG_SHIELD]},
-    {"id": 9, "name": "风行射手", "atk": 7, "hp": 21, "tags": [TAG_PIERCING_ARROW]},
-    {"id": 10, "name": "狂战士", "atk": 8, "hp": 19, "tags": [TAG_BERSERK]},
-    {"id": 11, "name": "毒药投手", "atk": 6, "hp": 21, "tags": [TAG_POISON]},
-    {"id": 12, "name": "重炮统领", "atk": 5, "hp": 25, "tags": [TAG_AOE]},
+    {"id": 1, "name": "均衡战士A", "atk": 8, "hp": 19, "tags": [], "type": "均衡", "initiative": 5},
+    {"id": 2, "name": "均衡战士B", "atk": 6, "hp": 23, "tags": [], "type": "均衡", "initiative": 5},
+    {"id": 3, "name": "均衡战士C", "atk": 5, "hp": 26, "tags": [], "type": "均衡", "initiative": 5},
+    {"id": 4, "name": "自爆步兵", "atk": 16, "hp": 3, "tags": [TAG_SELF_DESTRUCT], "type": "特殊", "initiative": 2},
+    {"id": 5, "name": "诅咒巫师", "atk": 6, "hp": 20, "tags": [TAG_REMOVE_TAG], "type": "特殊", "initiative": 3},
+    {"id": 6, "name": "死灵法师", "atk": 4, "hp": 24, "tags": [TAG_GROUP_REVIVE], "type": "辅助", "initiative": 5},
+    {"id": 7, "name": "铁甲卫士", "atk": 4, "hp": 30, "tags": [TAG_HEAVY_ARMOR], "type": "前排", "initiative": 6},
+    {"id": 8, "name": "护盾部署者", "atk": 2, "hp": 33, "tags": [TAG_SHIELD], "type": "前排", "initiative": 5},
+    {"id": 9, "name": "风行射手", "atk": 7, "hp": 21, "tags": [TAG_PIERCING_ARROW], "type": "输出", "initiative": 4},
+    {"id": 10, "name": "狂战士", "atk": 8, "hp": 19, "tags": [TAG_BERSERK], "type": "输出", "initiative": 5},
+    {"id": 11, "name": "毒药投手", "atk": 6, "hp": 21, "tags": [TAG_POISON], "type": "输出", "initiative": 5},
+    {"id": 12, "name": "重炮统领", "atk": 4, "hp": 25, "tags": [TAG_AOE], "type": "输出", "initiative": 7},
+    # 新增角色 13-20
+    {"id": 13, "name": "均衡战士D", "atk": 7, "hp": 22, "tags": [], "type": "均衡", "initiative": 5},
+    {"id": 14, "name": "均衡战士E", "atk": 5, "hp": 25, "tags": [], "type": "均衡", "initiative": 5},
+    {"id": 15, "name": "暗影猎手", "atk": 6, "hp": 22, "tags": [TAG_PIERCING_ARROW], "type": "输出", "initiative": 4},
+    {"id": 16, "name": "血怒斗士", "atk": 7, "hp": 18, "tags": [TAG_BERSERK], "type": "输出", "initiative": 5},
+    {"id": 17, "name": "晶壁守卫", "atk": 4, "hp": 28, "tags": [TAG_HEAVY_ARMOR], "type": "前排", "initiative": 6},
+    {"id": 18, "name": "噬魂者", "atk": 6, "hp": 22, "tags": [TAG_LIFE_STEAL], "type": "输出", "initiative": 5},
+    {"id": 19, "name": "荆棘守卫", "atk": 4, "hp": 28, "tags": [TAG_REFLECT], "type": "前排", "initiative": 6},
+    {"id": 20, "name": "处决者", "atk": 7, "hp": 20, "tags": [TAG_EXECUTE], "type": "输出", "initiative": 5},
 ]
 
 
 class Soldier(object):
     """
-    最简单的战士对象，直接用属性，不用额外库。
+    单个战斗单位：name/atk/hp/tags/team_index，以及 alive、护盾次数、中毒回合与伤害、先手值等运行时状态。
+    标签决定技能（护盾分担、重装减伤、自爆、复活、中毒等），由 Battlefield 在战斗中读写状态。
     """
 
-    def __init__(self, name, atk, hp, tags, team_index):
+    def __init__(self, name, atk, hp, tags, team_index, initiative=5):
         self.name = name
         self.atk = atk
         self.max_hp = hp
         self.hp = hp
-        self.tags = list(tags)  # 确保是列表
+        self.tags = list(tags)  # 确保是列表，避免外部修改影响
         self.team_index = team_index
+        self.initiative = initiative  # 先手值，越小越容易抢到先手
 
         self.alive = True
 
-        # 辅助状态，用于某些标签
+        # 护盾：仅 TAG_SHIELD 角色有 3 次；中毒：每轮次扣血，由 _apply_poison_tick 结算
         self.shield_charges = 3 if TAG_SHIELD in self.tags else 0
         self.poison_turns = 0
         self.poison_damage = 0
 
 
 def has_tag(soldier, tag):
+    """判断单位是否拥有某标签。"""
     return tag in soldier.tags
 
 
 def generate_random_pool(pool_size=6):
     """
-    从全角色表中随机抽取一份角色池。
-    返回的是角色 dict 的列表（不拷贝，使用时注意不要直接修改原表）。
+    从 ROLES 中无放回随机抽取 pool_size 个角色，返回 dict 列表。
+    注意：返回的是原表元素的引用，修改会影响 ROLES；调用方应拷贝后再改（如 game_service._clone_role_list）。
     """
     if pool_size > len(ROLES):
         raise ValueError("角色池大小不能超过角色总数")
@@ -71,8 +93,9 @@ def generate_random_pool(pool_size=6):
 
 class Battlefield(object):
     """
-    只负责战斗，不关心输入来源。
-    soldiers_by_team: [[Soldier, Soldier, Soldier], [...]]
+    战场：持有双方 Soldier 列表与每队策略，负责先手判定、轮次内行动顺序、选目标、伤害与标签效果。
+    soldiers_by_team: 二维列表 [[队0的3人], [队1的3人]]；strategies: 每队 {"basic", "priority_tags"}。
+    start_battle() 返回 (events, winner_index)，events 为事件元组列表供上层转文案。
     """
 
     def __init__(self, soldiers_by_team, strategies=None):
@@ -80,25 +103,25 @@ class Battlefield(object):
         self.team_count = len(soldiers_by_team)
         self.team_size = len(soldiers_by_team[0]) if soldiers_by_team else 0
 
-        # 每队的攻击策略：{"basic": "low_hp"|"high_atk", "priority_tags": [tag_id,...]}
+        # 每队的攻击策略：basic 为 low_hp 或 high_atk；priority_tags 为优先攻击的标签 ID 列表
         default_strategy = {"basic": BASIC_LOW_HP, "priority_tags": []}
         self.strategies = strategies if strategies is not None else [default_strategy] * self.team_count
         while len(self.strategies) < self.team_count:
             self.strategies.append(default_strategy)
 
-        # 死灵法师复活次数，且要求死灵法师存活时才生效
+        # 死灵法师：每队复活次数与是否仍有存活死灵法师，用于 _apply_group_revive_on_lethal
         self.revive_charges = [0 for _ in range(self.team_count)]
         self.necromancer_alive = [False for _ in range(self.team_count)]
 
         self._init_team_state()
         self.first_team_index = self._decide_first_team()
 
-    # ---------- 初始化 ----------
+    # ---------- 初始化：复活次数、诅咒剥夺 ----------
     def _init_team_state(self):
         for team_index, team in enumerate(self.soldiers_by_team):
             for soldier in team:
                 if has_tag(soldier, TAG_GROUP_REVIVE):
-                    self.revive_charges[team_index] += 2
+                    self.revive_charges[team_index] += 1
                     self.necromancer_alive[team_index] = True
 
         # 诅咒巫师：移除对方一个角色的标签
@@ -122,12 +145,12 @@ class Battlefield(object):
                         )
 
     def _decide_first_team(self):
-        """增益后双方攻击力与血量之和，小的一方先手。"""
+        """根据双方出场三人先手值之和判定先手；先手值越小越容易抢到先手，相等则随机。"""
         totals = []
         for team in self.soldiers_by_team:
-            total_atk = sum(s.atk for s in team)
-            total_hp = sum(s.max_hp for s in team)
-            totals.append(total_atk + total_hp)
+            # 只计算存活单位或所有出场单位的先手值？按文档应该是出场三人的先手值之和
+            total_initiative = sum(s.initiative for s in team)
+            totals.append(total_initiative)
         if totals[0] < totals[1]:
             return 0
         if totals[0] > totals[1]:
@@ -140,12 +163,13 @@ class Battlefield(object):
         return 1 - team_index
 
     def _turn_order(self):
+        """每轮次内按先手方、后手方的顺序行动。"""
         if self.first_team_index == 0:
             return [0, 1]
         return [1, 0]
 
     def _find_lowest_hp_target(self, team_index):
-        """保留用于穿透等需要「另一目标」时的兼容。"""
+        """在敌方存活单位中找血量最低目标（兼容用，实际选目标走 _find_attack_target）。"""
         return self._find_attack_target(None, team_index, exclude=None)
 
     def _find_attack_target(self, attacker_team_index, enemy_team_index, exclude=None):
@@ -171,14 +195,16 @@ class Battlefield(object):
             candidates.sort(key=lambda s: (s.hp, -s.atk))
         return candidates[0]
 
-    # ---------- 标签相关辅助 ----------
+    # ---------- 标签效果：狂暴、重装、自爆、复活、中毒 ----------
     def _apply_berserk(self, attacker, damage):
+        """狂暴：血量≤14 时伤害×1.4。"""
         if has_tag(attacker, TAG_BERSERK) and attacker.hp <= 14:
             return (damage * 14) // 10
         return damage
 
     def _apply_heavy_armor(self, target, damage, events):
-        if has_tag(target, TAG_HEAVY_ARMOR) and damage >= 8:
+        """重装：单次伤害≥7 时按 60% 结算并记录事件。"""
+        if has_tag(target, TAG_HEAVY_ARMOR) and damage >= 7:
             new_damage = (damage * 6) // 10
             events.append(("ARMOR_REDUCE", target.team_index, target.name, damage, new_damage))
             return new_damage
@@ -186,8 +212,8 @@ class Battlefield(object):
 
     def _apply_self_destruct_attack(self, attacker, target, damage, events):
         """
-        自爆：一对一攻击，如果目标原始 hp <=24 直接击杀，否则造成固定伤害。
-        无论如何攻击后自身死亡。
+        自爆：一对一攻击，若目标最大血量≤26（脆皮判定线）则直接击杀，否则按当前伤害结算。
+        攻击后自身必定死亡。若目标也是自爆步兵，则双方同归于尽（攻方自爆死，守方被击杀）。
         """
         if not has_tag(attacker, TAG_SELF_DESTRUCT):
             return damage, False
@@ -195,17 +221,19 @@ class Battlefield(object):
         attacker.alive = False
         events.append(("SELF_DESTRUCT", attacker.team_index, attacker.name))
 
-        if target.max_hp <= 24:
-            # 直接击杀：把伤害设为当前 hp
+        if target.max_hp <= 26:
+            # 脆皮判定线 26：直接击杀；若目标也是自爆则同归于尽
             return target.hp, True
-        # 否则按照当前 damage 处理
         return damage, True
 
     def _apply_group_revive_on_lethal(self, target, team_index, events):
         """
         死灵法师：队伍内存在存活的死灵法师，并且有剩余次数时，
-        被击杀队友以一半血量复活。
+        被击杀队友以 30% 最大血量（向下取整）复活。
+        自爆步兵不可被复活。
         """
+        if has_tag(target, TAG_SELF_DESTRUCT):
+            return False
         if not self.necromancer_alive[team_index]:
             return False
         if self.revive_charges[team_index] <= 0:
@@ -213,7 +241,7 @@ class Battlefield(object):
 
         self.revive_charges[team_index] -= 1
         target.alive = True
-        target.hp = target.max_hp // 2
+        target.hp = target.max_hp * 4 // 10
         events.append(
             ("REVIVE", team_index, target.name, target.hp, self.revive_charges[team_index])
         )
@@ -224,9 +252,10 @@ class Battlefield(object):
         self.revive_charges[team_index] = 0
 
     def _apply_poison_on_hit(self, attacker, target, events):
+        """中毒标签攻击命中时给目标挂中毒：持续 2 轮次，每轮次伤害可叠加，上限 6。"""
         if not has_tag(attacker, TAG_POISON):
             return
-        # 简单版本：叠加中毒，持续两回合，每回合造成 2 点伤害，最多叠 3 层
+        # 简单版本：叠加中毒，持续两轮次，每轮次造成 2 点伤害，最多叠 3 层
         if target.poison_turns <= 0:
             target.poison_turns = 2
             target.poison_damage = 2
@@ -238,6 +267,7 @@ class Battlefield(object):
         )
 
     def _apply_poison_tick(self, events):
+        """轮次初结算：所有存活单位若有中毒则扣血、减剩余轮次数，致死则记录 DIE(poison)。"""
         for team in self.soldiers_by_team:
             for soldier in team:
                 if not soldier.alive:
@@ -254,10 +284,14 @@ class Battlefield(object):
                         soldier.alive = False
                         events.append(("DIE", soldier.team_index, soldier.name, "poison"))
 
-    # ---------- 核心战斗 ----------
+    # ---------- 核心战斗循环 ----------
     def start_battle(self):
+        """
+        执行整场战斗：先记录先手与初始化事件，然后每轮次先中毒结算，再按出击位与先手顺序
+        依次让存活单位攻击（含 AOE/单体/自爆/穿透等），直到一方全灭，返回 (events, winner_index)。
+        """
         events = []
-        round_count = 0
+        round_count = 0  # 战斗内轮次计数（每轮次 6 人依次行动）
 
         # 先手权：在展示对局过程之前说明哪一方先手
         events.append(("FIRST_STRIKE", self.first_team_index))
@@ -270,9 +304,10 @@ class Battlefield(object):
             round_count += 1
             events.append(("ROUND", round_count))
 
-            # 回合开始时先结算中毒
+            # 轮次开始时先结算中毒
             self._apply_poison_tick(events)
 
+            # 本轮次内：按出击位 1→2→3，每位内按先手方→后手方行动
             for position in range(self.team_size):
                 for team_index in self._turn_order():
                     attacker = self.soldiers_by_team[team_index][position]
@@ -358,19 +393,23 @@ class Battlefield(object):
 
     def _do_single_hit(self, attacker, target, damage, events, allow_shield, allow_poison, allow_pierce):
         """
-        单次命中流程：护盾 -> 防御减伤 -> 伤害结算 -> 复活 / 死亡 -> 中毒
-        allow_pierce 目前只是占位，避免逻辑太乱（已经在上层处理）。
+        单次命中完整流程：若允许护盾则先由护盾单位分担 50% 并扣次数，再对主目标做重装减伤与扣血，
+        致死时尝试死灵法师复活；若允许中毒则在命中后给目标挂中毒。allow_pierce 由上层处理穿透二次目标。
         """
         del allow_pierce
 
-        # 护盾转移：把 50% 伤害转到本队护盾部署者
+        # 斩杀：目标当前血量 ≤ 最大血量 25% 时，伤害 ×1.5
+        if has_tag(attacker, TAG_EXECUTE) and target.hp <= target.max_hp * 25 // 100:
+            damage = (damage * 3) // 2
+
+        # 护盾转移：把 50% 伤害转到本队护盾部署者，主目标受到剩余的 50%
         original_damage = damage
         shield_target = None
         if allow_shield:
             shield_target = self._find_shield_for_team(target.team_index)
             if shield_target is not None and original_damage > 0:
-                transfer = original_damage // 2
-                still_on_main = original_damage - transfer
+                transfer = original_damage // 2  # 护盾分担 50%
+                still_on_main = original_damage - transfer  # 主目标受 50%
                 shield_target.shield_charges -= 1
                 events.append(
                     (
@@ -384,6 +423,7 @@ class Battlefield(object):
                 )
                 # 先对护盾自身结算
                 self._apply_damage_to_unit(attacker, shield_target, transfer, events)
+                # 主目标受到剩余的 50% 伤害
                 damage = still_on_main
 
         # 对主目标结算伤害
@@ -403,11 +443,15 @@ class Battlefield(object):
         return None
 
     def _apply_damage_to_unit(self, attacker, target, damage, events):
+        """对单个单位结算伤害：重装减伤、扣血、记录 HIT；若致死则记录 DIE、处理死灵法师死亡与复活。"""
         if damage <= 0 or not target.alive:
             return
 
         # 重装减伤
         damage = self._apply_heavy_armor(target, damage, events)
+
+        # 记录实际受到的伤害用于反弹计算
+        actual_damage = damage
 
         target.hp -= damage
         events.append(
@@ -421,6 +465,37 @@ class Battlefield(object):
                 max(target.hp, 0),
             )
         )
+
+        # 吸血：造成伤害的 25% 转为回复，单次回复上限 5；自爆不触发
+        if has_tag(attacker, TAG_LIFE_STEAL) and not has_tag(attacker, TAG_SELF_DESTRUCT):
+            heal = min(damage * 25 // 100, 5)
+            if heal > 0:
+                attacker.hp = min(attacker.hp + heal, attacker.max_hp)
+                events.append(
+                    ("LIFE_STEAL", attacker.team_index, attacker.name, heal, attacker.hp)
+                )
+
+        # 反弹：实际受到伤害的 40% 反弹给攻击者，反弹伤害不触发护盾/反弹/重装；自爆不反弹
+        if has_tag(target, TAG_REFLECT) and not has_tag(attacker, TAG_SELF_DESTRUCT):
+            reflect_damage = actual_damage * 4 // 10
+            if reflect_damage > 0:
+                attacker.hp -= reflect_damage
+                events.append(
+                    ("REFLECT", target.team_index, target.name, attacker.team_index, attacker.name, reflect_damage, max(attacker.hp, 0))
+                )
+                if attacker.hp <= 0:
+                    attacker.hp = 0
+                    attacker.alive = False
+                    events.append(("DIE", attacker.team_index, attacker.name, "reflect"))
+                    # 反弹杀死攻击者后，检查攻击者是否为死灵法师
+                    if has_tag(attacker, TAG_GROUP_REVIVE):
+                        self._on_necromancer_death(attacker.team_index)
+                    # 尝试死灵法师复活
+                    revived = self._apply_group_revive_on_lethal(
+                        attacker, attacker.team_index, events
+                    )
+                    if revived:
+                        pass  # 复活后反弹伤害结算结束
 
         if target.hp <= 0:
             target.hp = 0
@@ -450,6 +525,9 @@ __all__ = [
     "TAG_BERSERK",
     "TAG_POISON",
     "TAG_AOE",
+    "TAG_LIFE_STEAL",
+    "TAG_REFLECT",
+    "TAG_EXECUTE",
     "ROLES",
     "Soldier",
     "Battlefield",

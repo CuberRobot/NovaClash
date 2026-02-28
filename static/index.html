@@ -1,9 +1,10 @@
 <!doctype html>
 <html lang="zh-CN">
+  <!-- NovaClash 单页：匹配区 + 选角/增益/策略 + 战报与历史，结果浮层由 app.js 控制 -->
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>CardGame v1.0</title>
+    <title>NovaClash v1.2</title>
     <link rel="stylesheet" href="/static/styles.css" />
   </head>
   <body>
@@ -11,9 +12,9 @@
     <div class="app">
       <header class="header">
         <div class="brand">
-          <div class="logo">CG</div>
+          <div class="logo">NC</div>
           <div>
-            <div class="title">CardGame</div>
+            <div class="title">NovaClash</div>
             <div class="subtitle">两人在线对战 · 选角 · 增益 · 战斗回放</div>
           </div>
         </div>
@@ -27,6 +28,7 @@
 
       <main class="main">
         <section class="panel left">
+          <!-- 匹配：昵称、随机匹配、创建房间、加入房间 -->
           <div class="panel-title">匹配</div>
           <div class="card" id="matchCard">
             <label class="label">你的昵称</label>
@@ -71,6 +73,7 @@
         </section>
 
         <section class="panel center" id="battlePanel">
+          <!-- 选角、出击位、增益、策略、提交 -->
           <div class="panel-title">你的角色池</div>
           <div id="poolGrid" class="grid"></div>
 
@@ -125,6 +128,7 @@
         </section>
 
         <section class="panel right" id="logPanel">
+          <!-- 战报、原始事件、历史对局 -->
           <div class="panel-title">战报</div>
           <div class="card log">
             <div class="log-body" id="logBox">
@@ -149,7 +153,7 @@
         </div>
       </footer>
 
-      <!-- 对局结果提示动画层 -->
+      <!-- 对局/回合结果浮层，由 JS 显示/隐藏 -->
       <div class="result-overlay" id="resultOverlay" hidden>
         <div class="result-card">
           <div class="result-title" id="resultTitle">本局结束</div>

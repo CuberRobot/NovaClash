@@ -1,3 +1,6 @@
+/* NovaClash 样式：深色背景、三栏布局、卡片/按钮/战报/历史 */
+
+/* 背景与全局 */
 .bg {
   position: fixed;
   inset: 0;
@@ -94,6 +97,7 @@ body {
   color: rgba(233, 236, 247, 0.75);
 }
 
+/* 主内容三栏：左匹配、中选角、右战报 */
 .main {
   flex: 1;
   padding: 0 18px 18px 18px;
@@ -126,6 +130,7 @@ body {
   padding: 12px;
 }
 
+/* 表单与按钮 */
 .label {
   font-size: 12px;
   color: rgba(233, 236, 247, 0.8);
@@ -229,6 +234,7 @@ body {
   font-size: 12px;
 }
 
+/* 角色池网格、出击位、增益列表 */
 .grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -378,6 +384,7 @@ body {
   line-height: 1.4;
 }
 
+/* 战报区域、结果浮层、历史对局 */
 .log {
   height: 290px;
   overflow: hidden;
