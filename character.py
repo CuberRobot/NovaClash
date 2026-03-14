@@ -17,7 +17,7 @@ TAG_BERSERK = 7             # 狂暴
 TAG_POISON = 8              # 中毒
 TAG_AOE = 9                 # 群体伤害
 TAG_LIFE_STEAL = 10        # 吸血：造成伤害的 25% 转为回复，单次攻击回复上限 5；自爆不触发
-TAG_REFLECT = 11           # 反弹：实际受到伤害的 40% 反弹给攻击者，反弹伤害不触发护盾/反弹/重装；自爆伤害不反弹
+TAG_REFLECT = 11           # 反弹：实际受到伤害（重装减伤后）的 40% 反弹给攻击者，反弹伤害不触发护盾/反弹/重装；自爆攻击不触发反弹
 TAG_EXECUTE = 12           # 斩杀：目标当前血量 ≤ 最大血量 25% 时，本次伤害 ×1.5
 
 # 攻击目标基本策略
@@ -81,14 +81,75 @@ def has_tag(soldier, tag):
     return tag in soldier.tags
 
 
-def generate_random_pool(pool_size=6):
+# 混沌模式：互斥标签组合
+# 注意：自爆标签(TAG_SELF_DESTRUCT)在混沌模式中已被排除(见 CHAOS_AVAILABLE_ROLES)，
+#       因此自爆相关互斥规则在混沌模式中不会触发。保留这些规则是为了代码一致性和可能的未来扩展。
+# 自爆不能与群体复活/群体治疗、吸血、狂暴共存
+# 狂暴与重装盔甲逻辑冲突（一个鼓励低血量，一个防御高伤害）
+CHAOS_INCOMPATIBLE_TAGS: set[tuple[int, int]] = {
+    (TAG_SELF_DESTRUCT, TAG_GROUP_REVIVE),   # 自爆 + 群体复活
+    (TAG_SELF_DESTRUCT, TAG_LIFE_STEAL),     # 自爆 + 吸血
+    (TAG_SELF_DESTRUCT, TAG_BERSERK),        # 自爆 + 狂暴
+    (TAG_BERSERK, TAG_HEAVY_ARMOR),          # 狂暴 + 重装盔甲
+}
+
+# 混沌模式可用角色（排除自爆步兵，因为自爆有位置限制）
+# 自爆步兵 ID=4，只能放在首位，不适合混沌模式的随机性
+CHAOS_AVAILABLE_ROLES = [role for role in ROLES if role["id"] != 4]
+
+
+def are_tags_compatible(tags: list[int]) -> bool:
+    """
+    检查一组标签是否可以共存（用于混沌模式标签分配）。
+
+    Args:
+        tags: 标签 ID 列表
+
+    Returns:
+        True 如果标签之间没有互斥关系
+    """
+    tag_set = set(tags)
+    for tag1, tag2 in CHAOS_INCOMPATIBLE_TAGS:
+        if tag1 in tag_set and tag2 in tag_set:
+            return False
+    return True
+
+
+def generate_random_pool(pool_size: int = 6) -> list[dict]:
     """
     从 ROLES 中无放回随机抽取 pool_size 个角色，返回 dict 列表。
     注意：返回的是原表元素的引用，修改会影响 ROLES；调用方应拷贝后再改（如 game_service._clone_role_list）。
+
+    Args:
+        pool_size: 角色池大小
+
+    Returns:
+        角色 dict 列表
+
+    Raises:
+        ValueError: 当 pool_size 超过角色总数时
     """
     if pool_size > len(ROLES):
         raise ValueError("角色池大小不能超过角色总数")
     return sample(ROLES, pool_size)
+
+
+def generate_chaos_pool(pool_size: int = 6) -> list[dict]:
+    """
+    从混沌模式可用角色（排除自爆步兵）中无放回随机抽取 pool_size 个角色。
+
+    Args:
+        pool_size: 角色池大小
+
+    Returns:
+        角色 dict 列表
+
+    Raises:
+        ValueError: 当 pool_size 超过混沌模式可用角色总数时
+    """
+    if pool_size > len(CHAOS_AVAILABLE_ROLES):
+        raise ValueError("角色池大小不能超过混沌模式可用角色总数")
+    return sample(CHAOS_AVAILABLE_ROLES, pool_size)
 
 
 class Battlefield(object):
@@ -267,7 +328,7 @@ class Battlefield(object):
         )
 
     def _apply_poison_tick(self, events):
-        """轮次初结算：所有存活单位若有中毒则扣血、减剩余轮次数，致死则记录 DIE(poison)。"""
+        """轮次初结算：所有存活单位若有中毒则扣血、减剩余轮次数，致死则记录 DIE(poison) 并尝试复活。"""
         for team in self.soldiers_by_team:
             for soldier in team:
                 if not soldier.alive:
@@ -283,6 +344,12 @@ class Battlefield(object):
                         soldier.hp = 0
                         soldier.alive = False
                         events.append(("DIE", soldier.team_index, soldier.name, "poison"))
+                        # 检查是否是死灵法师
+                        if has_tag(soldier, TAG_GROUP_REVIVE):
+                            self._on_necromancer_death(soldier.team_index)
+                        # 尝试复活（非自爆单位）
+                        if not has_tag(soldier, TAG_SELF_DESTRUCT):
+                            self._apply_group_revive_on_lethal(soldier, soldier.team_index, events)
 
     # ---------- 核心战斗循环 ----------
     def start_battle(self):
@@ -516,6 +583,7 @@ class Battlefield(object):
 
 
 __all__ = [
+    # 标签常量
     "TAG_SELF_DESTRUCT",
     "TAG_GROUP_REVIVE",
     "TAG_REMOVE_TAG",
@@ -528,8 +596,15 @@ __all__ = [
     "TAG_LIFE_STEAL",
     "TAG_REFLECT",
     "TAG_EXECUTE",
+    # 混沌模式
+    "CHAOS_INCOMPATIBLE_TAGS",
+    "CHAOS_AVAILABLE_ROLES",
+    "are_tags_compatible",
+    # 类
     "ROLES",
     "Soldier",
     "Battlefield",
+    # 函数
     "generate_random_pool",
+    "generate_chaos_pool",
 ]

@@ -210,7 +210,12 @@ def event_to_text(evt):
     if t == "REVIVE":
         _, team_i, name, hp_after, left = evt
         return "%s被复活（HP=%d，复活剩余次数=%d）" % (name, hp_after, left)
-
+    if t == "LIFE_STEAL":
+        _, team_i, name, heal, hp_after = evt
+        return "%s吸血恢复%d点（HP=%d）" % (name, heal, hp_after)
+    if t == "REFLECT":
+        _, def_team, def_name, atk_team, atk_name, dmg, hp_after = evt
+        return "%s反弹%d点伤害给%s（%s HP=%d）" % (def_name, dmg, atk_name, atk_name, hp_after)
     return ""
 
 

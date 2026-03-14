@@ -6,13 +6,25 @@ import asyncio
 import json
 import random
 import string
+from enum import Enum
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request
 from fastapi.responses import FileResponse, HTMLResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.staticfiles import StaticFiles
 
-from game_service import build_team_from_selection, create_player_pools, run_battle_from_teams
+from game_service import (
+    build_team_from_selection,
+    create_player_pools,
+    run_battle_from_teams,
+)
+
+
+class GameMode(str, Enum):
+    """游戏模式枚举。"""
+    STANDARD = "standard"
+    CHAOS = "chaos"
+    BIG_BATTLEFIELD = "big_battlefield"
 
 
 app = FastAPI()
@@ -36,8 +48,9 @@ class Room(object):
     players: 列表项为 {ws, name, pool, submission}，pool 为本回合角色池，submission 为本回合已提交数据。
     """
 
-    def __init__(self, code):
+    def __init__(self, code, mode: str = "standard"):
         self.code = code
+        self.mode = mode  # "standard" / "chaos" / "big_battlefield"
         self.players = []  # [{ws, name, pool, pending_submission}]
         self.lock = asyncio.Lock()
         self.best_of = 3
@@ -132,6 +145,12 @@ def event_to_text(evt):
     if t == "REVIVE":
         _, team_i, name, hp_after, left = evt
         return "%s被复活（HP=%d，复活剩余次数=%d）" % (name, hp_after, left)
+    if t == "LIFE_STEAL":
+        _, team_i, name, heal, hp_after = evt
+        return "%s吸血恢复%d点（HP=%d）" % (name, heal, hp_after)
+    if t == "REFLECT":
+        _, def_team, def_name, atk_team, atk_name, dmg, hp_after = evt
+        return "%s反弹%d点伤害给%s（%s HP=%d）" % (def_name, dmg, atk_name, atk_name, hp_after)
     return ""
 
 
@@ -155,7 +174,16 @@ async def _start_next_round(room):
 
     # 整把游戏内角色池固定：首次开局时生成，后续回合复用
     if room.pools[0] is None or room.pools[1] is None:
-        pool1, pool2 = create_player_pools()
+        # 根据房间模式生成角色池
+        if getattr(room, "mode", "standard") == "chaos":
+            # 混沌模式：总标签数=4，每个角色最多 2 个标签，排除自爆步兵
+            pool1, pool2 = create_player_pools(pool_size=6, mode="chaos")
+        elif getattr(room, "mode", "standard") == "big_battlefield":
+            # 大战场模式：9 选 5，6 次增益（使用标准角色池，只是 pool_size 更大）
+            pool1, pool2 = create_player_pools(pool_size=9, mode="big_battlefield")
+        else:
+            # 标准模式：6 选 3，4 次增益
+            pool1, pool2 = create_player_pools(pool_size=6, mode="standard")
         room.pools[0] = pool1
         room.pools[1] = pool2
     else:
@@ -189,15 +217,22 @@ async def _try_resolve_round(room):
     sub1 = room.players[0]["submission"]
     sub2 = room.players[1]["submission"]
 
+    # 根据房间模式确定 team_size
+    mode = getattr(room, "mode", "standard")
+    if mode == "big_battlefield":
+        team_size = 5
+    else:
+        team_size = 3
+
     try:
-        team1 = build_team_from_selection(room.players[0]["pool"], sub1["selection"], sub1["gains"])
+        team1 = build_team_from_selection(room.players[0]["pool"], sub1["selection"], sub1["gains"], team_size=team_size)
     except Exception as e:
         await ws_send(room.players[0]["ws"], {"type": "error", "message": str(e)})
         room.players[0]["submission"] = None
         return
 
     try:
-        team2 = build_team_from_selection(room.players[1]["pool"], sub2["selection"], sub2["gains"])
+        team2 = build_team_from_selection(room.players[1]["pool"], sub2["selection"], sub2["gains"], team_size=team_size)
     except Exception as e:
         await ws_send(room.players[1]["ws"], {"type": "error", "message": str(e)})
         room.players[1]["submission"] = None
@@ -249,7 +284,7 @@ async def _try_resolve_round(room):
     await _start_next_round(room)
 
 
-async def _join_random(ws, name):
+async def _join_random(ws, name, mode: str = "standard"):
     """
     随机匹配：只负责查找/创建一个可用的随机房间，并把房间号返回给前端。
     实际加入房间仍然通过 join_room 完成。
@@ -257,21 +292,22 @@ async def _join_random(ws, name):
     async with ROOMS_LOCK:
         target_room = None
         for room in ROOMS.values():
-            if getattr(room, "is_random", False) and not room.is_full():
+            # 只匹配相同模式且非满员的房间
+            if getattr(room, "mode", "standard") == mode and getattr(room, "is_random", False) and not room.is_full():
                 target_room = room
                 break
 
         if target_room is None:
             code = _room_code()
-            target_room = Room(code)
+            target_room = Room(code, mode=mode)
             target_room.is_random = True
             ROOMS[code] = target_room
-            mode = "wait"
+            match_mode = "wait"
         else:
             code = target_room.code
-            mode = "found"
+            match_mode = "found"
 
-    if mode == "wait":
+    if match_mode == "wait":
         # 告知前端：已创建随机房间，等待对手；前端再调用 join_room 进入房间
         await ws_send(ws, {"type": "match_wait", "room": code})
     else:
@@ -281,7 +317,7 @@ async def _join_random(ws, name):
     return None
 
 
-async def _join_room(ws, name, code):
+async def _join_room(ws, name, code, mode: str = "standard"):
     """
     加入指定房间：若 code 为空则新建房间并生成房间号；同一连接不能重复加入；
     满员返回 None。加入后若已两人则发 matched 并 _start_next_round，否则发 waiting。
@@ -292,7 +328,7 @@ async def _join_room(ws, name, code):
 
     room = ROOMS.get(code)
     if room is None:
-        room = Room(code)
+        room = Room(code, mode=mode)
         ROOMS[code] = room
 
     async with room.lock:
@@ -354,13 +390,15 @@ async def websocket_endpoint(ws: WebSocket):
 
             if t == "join_random":
                 name = data.get("name") or "玩家"
-                room = await _join_random(ws, name)
+                mode = data.get("mode", "standard")
+                room = await _join_random(ws, name, mode)
                 continue
 
             if t == "join_room":
                 name = data.get("name") or "玩家"
                 code = data.get("room") or ""
-                room = await _join_room(ws, name, code)
+                mode = data.get("mode", "standard")
+                room = await _join_room(ws, name, code, mode)
                 continue
 
             if t == "submit_round":
@@ -370,22 +408,35 @@ async def websocket_endpoint(ws: WebSocket):
                     continue
                 r = int(data.get("round") or 0)
                 selection = data.get("selection") or []
+
+                # 根据模式确定增益次数
+                if getattr(room, "mode", "standard") == "big_battlefield":
+                    expected_gains = 6
+                    team_size = 5
+                else:
+                    expected_gains = 4
+                    team_size = 3
+
+                # 校验增益数量
                 gains = data.get("gains") or []
                 gains = [tuple(g) for g in gains if isinstance(g, list) and len(g) == 2]
+                if len(gains) != expected_gains:
+                    await ws_send(ws, {"type": "error", "message": f"本回合需要恰好使用 {expected_gains} 次增益"})
+                    continue
 
                 if r != room.round:
                     await ws_send(ws, {"type": "error", "message": "回合号不匹配"})
                     continue
 
                 # 提前验证：每个位置最多2次增益
-                gain_count = [0, 0, 0]
+                gain_count = [0] * team_size
                 for position, gain_type in gains:
-                    if isinstance(position, int) and 1 <= position <= 3:
+                    if isinstance(position, int) and 1 <= position <= team_size:
                         gain_count[position - 1] += 1
                 for i, count in enumerate(gain_count):
                     if count > 2:
                         await ws_send(ws, {"type": "error", "message": f"第{i+1}个出击位已获得{count}次增益，每个角色最多2个增益"})
-                        continue
+                        return  # 直接返回，避免继续执行提交逻辑
 
                 # 找到提交者是第几位玩家
                 player_index = None

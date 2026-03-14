@@ -5,7 +5,7 @@ __pycache__/
 *.pyc
 # 对拍日志（可选，若需提交测试输出可注释掉下一行）
 tests/novaclash_batch_*.txt
-# 若需版本管理 docs 可删除下一行
-docs/
 tests/
 test.py
+.claude/
+CLAUDE.md
